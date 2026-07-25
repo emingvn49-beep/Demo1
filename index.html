@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Neon Drift</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #05010d; font-family: 'Segoe UI', system-ui, sans-serif; touch-action: none; }
+  #canvas-wrap { position: fixed; inset: 0; }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  #hud {
+    position: fixed; top: 0; left: 0; right: 0;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 18px 20px; pointer-events: none; z-index: 10;
+  }
+  .pill {
+    background: rgba(10, 6, 30, 0.55);
+    border: 1px solid rgba(0, 255, 220, 0.35);
+    box-shadow: 0 0 18px rgba(0, 255, 220, 0.15), inset 0 0 12px rgba(0,255,220,0.05);
+    border-radius: 14px;
+    padding: 8px 16px;
+    color: #d8fff5;
+    font-size: 15px;
+    letter-spacing: 0.5px;
+    backdrop-filter: blur(6px);
+  }
+  #score .num { color: #4dfff0; font-weight: 700; font-size: 18px; text-shadow: 0 0 8px #4dfff0; }
+  #dist .num { color: #ff5fd6; font-weight: 700; font-size: 18px; text-shadow: 0 0 8px #ff5fd6; }
+
+  #hint {
+    position: fixed; bottom: 34px; left: 0; right: 0;
+    text-align: center; color: rgba(216,255,245,0.55);
+    font-size: 13px; letter-spacing: 1px; pointer-events: none; z-index: 10;
+    transition: opacity 0.6s;
+  }
+
+  #overlay {
+    position: fixed; inset: 0; z-index: 20;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: radial-gradient(circle at 50% 30%, rgba(30,10,60,0.92), rgba(3,1,10,0.97));
+    text-align: center; padding: 24px;
+  }
+  #overlay h1 {
+    font-size: 42px; letter-spacing: 3px;
+    background: linear-gradient(90deg, #4dfff0, #ff5fd6);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 0 30px rgba(77,255,240,0.3);
+    margin-bottom: 6px;
+  }
+  #overlay .sub { color: rgba(216,255,245,0.6); font-size: 14px; margin-bottom: 28px; letter-spacing: 1px; }
+  #overlay .msg { color: #fff; font-size: 20px; margin-bottom: 8px; min-height: 28px; }
+  #overlay .msg2 { color: rgba(216,255,245,0.5); font-size: 14px; margin-bottom: 30px; }
+  #playBtn {
+    pointer-events: all;
+    background: linear-gradient(135deg, #00ffd5, #ff3fc9);
+    border: none; color: #06030f; font-weight: 700; font-size: 17px;
+    letter-spacing: 1px; padding: 16px 46px; border-radius: 40px;
+    box-shadow: 0 0 30px rgba(0,255,213,0.45), 0 8px 20px rgba(0,0,0,0.4);
+    cursor: pointer;
+  }
+  #playBtn:active { transform: scale(0.96); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="canvas-wrap"><canvas id="game"></canvas></div>
+
+<div id="hud">
+  <div class="pill" id="score">ENERJİ <span class="num" id="scoreNum">0</span></div>
+  <div class="pill" id="dist">MESAFE <span class="num" id="distNum">0</span>m</div>
+</div>
+
+<div id="hint">PARMAĞINI SÜRÜKLE • TOPU YÖNLENDİR</div>
+
+<div id="overlay">
+  <h1>NEON DRIFT</h1>
+  <div class="sub">3D SÜRÜKLE VE HAYATTA KAL</div>
+  <div class="msg" id="msg">Kayan ışık yolunda hayatta kal</div>
+  <div class="msg2" id="msg2">Enerji topla, boşluklara düşme</div>
+  <button id="playBtn">OYNA</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+  const canvas = document.getElementById('game');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x05010d, 12, 46);
+
+  const camera = new THREE.PerspectiveCamera(62, window.innerWidth/window.innerHeight, 0.1, 100);
+
+  // ---------- lighting ----------
+  scene.add(new THREE.AmbientLight(0x6644ff, 0.55));
+  const key = new THREE.DirectionalLight(0x00ffe0, 0.9);
+  key.position.set(3, 8, 4);
+  scene.add(key);
+  const rim = new THREE.PointLight(0xff3fc9, 1.2, 30);
+  rim.position.set(-4, 3, -6);
+  scene.add(rim);
+
+  // ---------- track parameters ----------
+  const LANE_W = 3.2;      // half-width of track
+  const SEG_LEN = 4;       // length of each track segment
+  const SEGMENTS = 40;     // number of segments kept alive
+  let segMeshes = [];
+  let segData = [];        // {z, gap:boolean, hasCoin:boolean, coinMesh}
+  let coinPool = [];
+
+  const trackMat = new THREE.MeshStandardMaterial({ color: 0x120a2e, emissive: 0x00ffe0, emissiveIntensity: 0.15, metalness: 0.4, roughness: 0.5 });
+  const edgeMat = new THREE.MeshBasicMaterial({ color: 0x4dfff0 });
+
+  function makeSegment(z, isGap){
+    const group = new THREE.Group();
+    if (!isGap) {
+      const floor = new THREE.Mesh(new THREE.BoxGeometry(LANE_W*2, 0.3, SEG_LEN), trackMat);
+      floor.position.set(0, -0.15, z);
+      group.add(floor);
+
+      const edgeL = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.35, SEG_LEN), edgeMat);
+      edgeL.position.set(-LANE_W, 0.02, z);
+      group.add(edgeL);
+      const edgeR = edgeL.clone();
+      edgeR.position.set(LANE_W, 0.02, z);
+      group.add(edgeR);
+    }
+    scene.add(group);
+    return group;
+  }
+
+  function resetTrack(){
+    segMeshes.forEach(g => scene.remove(g));
+    segMeshes = [];
+    segData = [];
+    for (let i=0;i<SEGMENTS;i++){
+      const z = -i*SEG_LEN;
+      const isGap = i>6 && Math.random() < 0.12;
+      const g = makeSegment(z, isGap);
+      segMeshes.push(g);
+      const hasCoin = !isGap && i>3 && Math.random() < 0.5;
+      let coinMesh = null;
+      if (hasCoin){
+        coinMesh = new THREE.Mesh(
+          new THREE.OctahedronGeometry(0.28, 0),
+          new THREE.MeshStandardMaterial({ color: 0xffe14d, emissive: 0xffe14d, emissiveIntensity: 0.8, metalness: 0.6, roughness: 0.2 })
+        );
+        coinMesh.position.set((Math.random()-0.5)*LANE_W*1.4, 0.6, z);
+        scene.add(coinMesh);
+      }
+      segData.push({ z, isGap, hasCoin, coinMesh, taken:false });
+    }
+  }
+
+  // ---------- ball ----------
+  const ball = new THREE.Mesh(
+    new THREE.SphereGeometry(0.42, 24, 24),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x2fd8ff, emissiveIntensity: 0.6, metalness: 0.3, roughness: 0.25 })
+  );
+  ball.position.set(0, 0.42, 2);
+  scene.add(ball);
+
+  const ballGlow = new THREE.PointLight(0x4dfff0, 1.4, 6);
+  ball.add(ballGlow);
+
+  // ---------- state ----------
+  let state = 'menu'; // menu, playing, dead
+  let speed = 9;          // world units per second (track scroll speed)
+  let ballX = 0;          // target lateral position
+  let ballXVel = 0;
+  let dragging = false;
+  let lastDragX = 0;
+  let elapsed = 0;
+  let score = 0;
+  let distance = 0;
+  let bobT = 0;
+  let fallVel = 0;
+  let falling = false;
+
+  const scoreNum = document.getElementById('scoreNum');
+  const distNum = document.getElementById('distNum');
+  const overlay = document.getElementById('overlay');
+  const msg = document.getElementById('msg');
+  const msg2 = document.getElementById('msg2');
+  const playBtn = document.getElementById('playBtn');
+  const hint = document.getElementById('hint');
+
+  function startGame(){
+    resetTrack();
+    ball.position.set(0, 0.42, 2);
+    ballX = 0; ballXVel = 0;
+    speed = 9;
+    score = 0; distance = 0; elapsed = 0;
+    falling = false; fallVel = 0;
+    scoreNum.textContent = '0';
+    distNum.textContent = '0';
+    overlay.classList.add('hidden');
+    hint.style.opacity = '1';
+    state = 'playing';
+  }
+
+  function gameOver(){
+    state = 'dead';
+    msg.textContent = 'Düştün!';
+    msg2.textContent = 'Enerji: ' + score + '  •  Mesafe: ' + Math.floor(distance) + 'm';
+    playBtn.textContent = 'TEKRAR DENE';
+    overlay.classList.remove('hidden');
+  }
+
+  playBtn.addEventListener('click', startGame);
+
+  // ---------- input (drag to steer) ----------
+  function onDown(x){ dragging = true; lastDragX = x; }
+  function onMove(x){
+    if (!dragging) return;
+    const dx = x - lastDragX;
+    lastDragX = x;
+    ballXVel += dx * 0.018;
+  }
+  function onUp(){ dragging = false; }
+
+  canvas.addEventListener('touchstart', e => { onDown(e.touches[0].clientX); }, {passive:true});
+  canvas.addEventListener('touchmove', e => { onMove(e.touches[0].clientX); }, {passive:true});
+  canvas.addEventListener('touchend', onUp);
+  canvas.addEventListener('mousedown', e => onDown(e.clientX));
+  window.addEventListener('mousemove', e => onMove(e.clientX));
+  window.addEventListener('mouseup', onUp);
+
+  // ---------- resize ----------
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // ---------- loop ----------
+  let lastT = performance.now();
+  function animate(now){
+    requestAnimationFrame(animate);
+    const dt = Math.min((now-lastT)/1000, 0.05);
+    lastT = now;
+    bobT += dt;
+
+    if (state === 'playing') {
+      elapsed += dt;
+      speed = 9 + elapsed*0.15; // gradually speed up
+      distance += speed*dt*0.5;
+      distNum.textContent = Math.floor(distance);
+
+      // steering physics
+      ballXVel *= 0.88;
+      ballX += ballXVel;
+      ballX = Math.max(-LANE_W+0.4, Math.min(LANE_W-0.4, ballX));
+
+      ball.position.x += (ballX - ball.position.x) * 0.18;
+      ball.rotation.z -= ballXVel * 0.5;
+      ball.rotation.x -= speed*dt*0.9;
+
+      if (!falling) {
+        ball.position.y = 0.42 + Math.sin(bobT*10)*0.015;
+
+        // check current segment under ball for gap
+        const ballZ = ball.position.z;
+        // find segment whose range contains a world-relative position:
+        // segments move toward camera by scrolling segData z + scrollOffset
+      }
+
+      // scroll world toward camera
+      const scrollAmt = speed*dt;
+      for (let i=0;i<segMeshes.length;i++){
+        segMeshes[i].position.z += scrollAmt;
+        segData[i].z += scrollAmt;
+        if (segData[i].coinMesh) segData[i].coinMesh.position.z += scrollAmt;
+      }
+
+      // recycle segments that passed camera
+      for (let i=0;i<segData.length;i++){
+        if (segData[i].z > 6) {
+          // move to back
+          const minZ = Math.min(...segData.map(s=>s.z));
+          scene.remove(segMeshes[i]);
+          if (segData[i].coinMesh) scene.remove(segData[i].coinMesh);
+          const newZ = minZ - SEG_LEN;
+          const isGap = Math.random() < 0.15;
+          const g = makeSegment(newZ, isGap);
+          segMeshes[i] = g;
+          const hasCoin = !isGap && Math.random() < 0.5;
+          let coinMesh = null;
+          if (hasCoin){
+            coinMesh = new THREE.Mesh(
+              new THREE.OctahedronGeometry(0.28, 0),
+              new THREE.MeshStandardMaterial({ color: 0xffe14d, emissive: 0xffe14d, emissiveIntensity: 0.8, metalness: 0.6, roughness: 0.2 })
+            );
+            coinMesh.position.set((Math.random()-0.5)*LANE_W*1.4, 0.6, newZ);
+            scene.add(coinMesh);
+          }
+          segData[i] = { z:newZ, isGap, hasCoin, coinMesh, taken:false };
+        }
+      }
+
+      // coin collection + spin
+      for (const s of segData){
+        if (s.coinMesh){
+          s.coinMesh.rotation.y += dt*3;
+          s.coinMesh.position.y = 0.6 + Math.sin(bobT*4)*0.08;
+          if (!s.taken && Math.abs(s.coinMesh.position.z - ball.position.z) < 0.5 && Math.abs(s.coinMesh.position.x - ball.position.x) < 0.55) {
+            s.taken = true;
+            scene.remove(s.coinMesh);
+            s.coinMesh = null;
+            score += 1;
+            scoreNum.textContent = score;
+          }
+        }
+      }
+
+      // gap detection under the ball (z ~ 2, near-fixed)
+      if (!falling) {
+        const underZ = ball.position.z;
+        let onGap = false;
+        let onTrack = false;
+        for (const s of segData){
+          if (Math.abs(s.z - underZ) < SEG_LEN/2 + 0.3) {
+            if (s.isGap) onGap = true; else onTrack = true;
+          }
+        }
+        if (onGap && !onTrack) {
+          falling = true;
+          fallVel = 0;
+        }
+      }
+
+      if (falling) {
+        fallVel -= 18*dt;
+        ball.position.y += fallVel*dt;
+        if (ball.position.y < -8) gameOver();
+      }
+
+      // camera follow
+      camera.position.x += (ball.position.x*0.5 - camera.position.x)*0.08;
+      camera.position.y += (3.4 - camera.position.y)*0.06;
+      camera.position.z = ball.position.z + 6;
+      camera.lookAt(ball.position.x*0.3, 0.3, ball.position.z - 4);
+
+      rim.position.x = ball.position.x;
+    } else {
+      // idle camera drift on menu
+      camera.position.x = Math.sin(bobT*0.2)*1.5;
+      camera.position.y = 3.4;
+      camera.position.z = 8;
+      camera.lookAt(0,0,-6);
+    }
+
+    renderer.render(scene, camera);
+  }
+
+  resetTrack();
+  requestAnimationFrame(animate);
+})();
+</script>
+</body>
+</html>
