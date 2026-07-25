@@ -2,7 +2,7 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
- <link rel="manifest" href="manifest.json">
+<link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#00ffd5">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Neon Drift</title>
@@ -75,13 +75,13 @@
   <div class="pill" id="dist">MESAFE <span class="num" id="distNum">0</span>m</div>
 </div>
 
-<div id="hint">PARMAĞINI SÜRÜKLE • TOPU YÖNLENDİR</div>
+<div id="hint">PARMAĞINI SÜRÜKLE • KAPILARDAN GEÇ</div>
 
 <div id="overlay">
   <h1>NEON DRIFT</h1>
-  <div class="sub">3D SÜRÜKLE VE HAYATTA KAL</div>
-  <div class="msg" id="msg">Kayan ışık yolunda hayatta kal</div>
-  <div class="msg2" id="msg2">Enerji topla, boşluklara düşme</div>
+  <div class="sub">DÖNEN TÜNELDE HAYATTA KAL</div>
+  <div class="msg" id="msg">Kapılardaki boşluklardan geç</div>
+  <div class="msg2" id="msg2">Enerji topla, duvarlara çarpma</div>
   <button id="playBtn">OYNA</button>
 </div>
 
@@ -94,95 +94,124 @@
   renderer.setSize(window.innerWidth, window.innerHeight);
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(0x05010d, 12, 46);
+  scene.fog = new THREE.Fog(0x05010d, 10, 34);
 
-  const camera = new THREE.PerspectiveCamera(62, window.innerWidth/window.innerHeight, 0.1, 100);
+  const camera = new THREE.PerspectiveCamera(66, window.innerWidth/window.innerHeight, 0.1, 100);
 
   // ---------- lighting ----------
-  scene.add(new THREE.AmbientLight(0x6644ff, 0.55));
-  const key = new THREE.DirectionalLight(0x00ffe0, 0.9);
-  key.position.set(3, 8, 4);
+  scene.add(new THREE.AmbientLight(0x6644ff, 0.6));
+  const key = new THREE.PointLight(0x00ffe0, 1.2, 20);
+  key.position.set(0, 2, 4);
   scene.add(key);
-  const rim = new THREE.PointLight(0xff3fc9, 1.2, 30);
-  rim.position.set(-4, 3, -6);
+  const rim = new THREE.PointLight(0xff3fc9, 1.1, 18);
+  rim.position.set(0, -2, -4);
   scene.add(rim);
 
-  // ---------- track parameters ----------
-  const LANE_W = 3.2;      // half-width of track
-  const SEG_LEN = 4;       // length of each track segment
-  const SEGMENTS = 40;     // number of segments kept alive
-  let segMeshes = [];
-  let segData = [];        // {z, gap:boolean, hasCoin:boolean, coinMesh}
-  let coinPool = [];
+  // ---------- tunnel geometry (decorative wireframe) ----------
+  const TUNNEL_R = 2.7;
+  const tunnelMat = new THREE.MeshBasicMaterial({ color: 0x1a0f3a, wireframe: true, transparent: true, opacity: 0.5 });
+  const tunnelGeo = new THREE.CylinderGeometry(TUNNEL_R, TUNNEL_R, 60, 20, 20, true);
+  tunnelGeo.rotateX(Math.PI/2);
+  const tunnelMesh = new THREE.Mesh(tunnelGeo, tunnelMat);
+  tunnelMesh.position.z = -20;
+  scene.add(tunnelMesh);
 
-  const trackMat = new THREE.MeshStandardMaterial({ color: 0x120a2e, emissive: 0x00ffe0, emissiveIntensity: 0.15, metalness: 0.4, roughness: 0.5 });
-  const edgeMat = new THREE.MeshBasicMaterial({ color: 0x4dfff0 });
+  // ---------- gates (rings with gaps) ----------
+  const SEG_COUNT = 10;
+  const ANGLE_STEP = (Math.PI*2) / SEG_COUNT;
+  const GATE_SPACING = 6;
+  const GATE_COUNT = 10;
+  const BAND_INNER = 1.5;
+  const BAND_OUTER = TUNNEL_R;
 
-  function makeSegment(z, isGap){
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x1a1040, emissive: 0x8844ff, emissiveIntensity: 0.5, metalness: 0.5, roughness: 0.4 });
+  const gemMat = new THREE.MeshStandardMaterial({ color: 0xffe14d, emissive: 0xffe14d, emissiveIntensity: 0.9, metalness: 0.6, roughness: 0.2 });
+
+  let gates = []; // {z, gapStart(index), pivot(group), gem, gemTaken}
+
+  function buildGate(z){
     const group = new THREE.Group();
-    if (!isGap) {
-      const floor = new THREE.Mesh(new THREE.BoxGeometry(LANE_W*2, 0.3, SEG_LEN), trackMat);
-      floor.position.set(0, -0.15, z);
-      group.add(floor);
-
-      const edgeL = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.35, SEG_LEN), edgeMat);
-      edgeL.position.set(-LANE_W, 0.02, z);
-      group.add(edgeL);
-      const edgeR = edgeL.clone();
-      edgeR.position.set(LANE_W, 0.02, z);
-      group.add(edgeR);
+    group.position.z = z;
+    const gapStartSeg = Math.floor(Math.random()*SEG_COUNT);
+    const gapSpan = 2; // number of open segments
+    for (let i=0;i<SEG_COUNT;i++){
+      const isGap = (i===gapStartSeg || i===((gapStartSeg+1)%SEG_COUNT));
+      if (isGap) continue;
+      const angle = i*ANGLE_STEP;
+      const pivot = new THREE.Group();
+      pivot.rotation.z = angle;
+      const h = BAND_OUTER - BAND_INNER;
+      const w = ANGLE_STEP * ((BAND_INNER+BAND_OUTER)/2) * 0.92;
+      const box = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.35), wallMat);
+      box.position.y = (BAND_INNER+BAND_OUTER)/2;
+      pivot.add(box);
+      group.add(pivot);
     }
+    // gem in the gap
+    const gapCenterAngle = (gapStartSeg+1)*ANGLE_STEP;
+    const gemR = (BAND_INNER+BAND_OUTER)/2;
+    const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.26, 0), gemMat);
+    gem.position.set(gemR*Math.cos(gapCenterAngle), gemR*Math.sin(gapCenterAngle), 0);
+    group.add(gem);
+
     scene.add(group);
-    return group;
+    return { z, gapStartSeg, gapSpan, group, gem, gemTaken:false };
   }
 
-  function resetTrack(){
-    segMeshes.forEach(g => scene.remove(g));
-    segMeshes = [];
-    segData = [];
-    for (let i=0;i<SEGMENTS;i++){
-      const z = -i*SEG_LEN;
-      const isGap = i>6 && Math.random() < 0.12;
-      const g = makeSegment(z, isGap);
-      segMeshes.push(g);
-      const hasCoin = !isGap && i>3 && Math.random() < 0.5;
-      let coinMesh = null;
-      if (hasCoin){
-        coinMesh = new THREE.Mesh(
-          new THREE.OctahedronGeometry(0.28, 0),
-          new THREE.MeshStandardMaterial({ color: 0xffe14d, emissive: 0xffe14d, emissiveIntensity: 0.8, metalness: 0.6, roughness: 0.2 })
-        );
-        coinMesh.position.set((Math.random()-0.5)*LANE_W*1.4, 0.6, z);
-        scene.add(coinMesh);
-      }
-      segData.push({ z, isGap, hasCoin, coinMesh, taken:false });
+  function resetGates(){
+    gates.forEach(g => scene.remove(g.group));
+    gates = [];
+    for (let i=0;i<GATE_COUNT;i++){
+      const z = -14 - i*GATE_SPACING;
+      gates.push(buildGate(z));
     }
   }
 
-  // ---------- ball ----------
-  const ball = new THREE.Mesh(
-    new THREE.SphereGeometry(0.42, 24, 24),
-    new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x2fd8ff, emissiveIntensity: 0.6, metalness: 0.3, roughness: 0.25 })
-  );
-  ball.position.set(0, 0.42, 2);
-  scene.add(ball);
+  function angleNorm(a){
+    a = a % (Math.PI*2);
+    if (a<0) a += Math.PI*2;
+    return a;
+  }
 
-  const ballGlow = new THREE.PointLight(0x4dfff0, 1.4, 6);
-  ball.add(ballGlow);
+  function inGap(theta, gate){
+    const t = angleNorm(theta);
+    const gapStartAngle = angleNorm(gate.gapStartSeg*ANGLE_STEP);
+    const gapEndAngle = angleNorm(gapStartAngle + gate.gapSpan*ANGLE_STEP);
+    const margin = 0.12;
+    if (gapEndAngle > gapStartAngle){
+      return t > gapStartAngle+margin && t < gapEndAngle-margin;
+    } else {
+      // wraps around 0
+      return (t > gapStartAngle+margin) || (t < gapEndAngle-margin);
+    }
+  }
+
+  // ---------- player ----------
+  const PLAYER_R = 2.0;
+  const PLAYER_Z = 2;
+  let theta = Math.PI/2; // start at top-ish
+  let thetaVel = 0;
+
+  const ship = new THREE.Group();
+  const shipBody = new THREE.Mesh(
+    new THREE.ConeGeometry(0.28, 0.62, 12),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x2fd8ff, emissiveIntensity: 0.7, metalness: 0.4, roughness: 0.25 })
+  );
+  shipBody.rotation.x = Math.PI/2;
+  ship.add(shipBody);
+  const shipGlow = new THREE.PointLight(0x4dfff0, 1.3, 5);
+  ship.add(shipGlow);
+  scene.add(ship);
 
   // ---------- state ----------
-  let state = 'menu'; // menu, playing, dead
-  let speed = 9;          // world units per second (track scroll speed)
-  let ballX = 0;          // target lateral position
-  let ballXVel = 0;
-  let dragging = false;
-  let lastDragX = 0;
+  let state = 'menu';
+  let speed = 8;
   let elapsed = 0;
   let score = 0;
   let distance = 0;
   let bobT = 0;
-  let fallVel = 0;
-  let falling = false;
+  let dragging = false;
+  let lastDragX = 0;
 
   const scoreNum = document.getElementById('scoreNum');
   const distNum = document.getElementById('distNum');
@@ -193,12 +222,11 @@
   const hint = document.getElementById('hint');
 
   function startGame(){
-    resetTrack();
-    ball.position.set(0, 0.42, 2);
-    ballX = 0; ballXVel = 0;
-    speed = 9;
+    resetGates();
+    theta = Math.PI/2;
+    thetaVel = 0;
+    speed = 8;
     score = 0; distance = 0; elapsed = 0;
-    falling = false; fallVel = 0;
     scoreNum.textContent = '0';
     distNum.textContent = '0';
     overlay.classList.add('hidden');
@@ -208,21 +236,30 @@
 
   function gameOver(){
     state = 'dead';
-    msg.textContent = 'Düştün!';
+    msg.textContent = 'Çarptın!';
     msg2.textContent = 'Enerji: ' + score + '  •  Mesafe: ' + Math.floor(distance) + 'm';
     playBtn.textContent = 'TEKRAR DENE';
     overlay.classList.remove('hidden');
   }
 
-  playBtn.addEventListener('click', startGame);
+  function tryFullscreen(){
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+    if (req) { try { req.call(el).catch(()=>{}); } catch(e){} }
+  }
 
-  // ---------- input (drag to steer) ----------
+  playBtn.addEventListener('click', () => {
+    tryFullscreen();
+    startGame();
+  });
+
+  // ---------- input ----------
   function onDown(x){ dragging = true; lastDragX = x; }
   function onMove(x){
     if (!dragging) return;
     const dx = x - lastDragX;
     lastDragX = x;
-    ballXVel += dx * 0.018;
+    thetaVel -= dx * 0.012;
   }
   function onUp(){ dragging = false; }
 
@@ -233,7 +270,6 @@
   window.addEventListener('mousemove', e => onMove(e.clientX));
   window.addEventListener('mouseup', onUp);
 
-  // ---------- resize ----------
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth/window.innerHeight;
     camera.updateProjectionMatrix();
@@ -248,119 +284,81 @@
     lastT = now;
     bobT += dt;
 
+    tunnelMesh.rotation.z += dt*0.05;
+
     if (state === 'playing') {
       elapsed += dt;
-      speed = 9 + elapsed*0.15; // gradually speed up
+      speed = 8 + elapsed*0.13;
       distance += speed*dt*0.5;
       distNum.textContent = Math.floor(distance);
 
-      // steering physics
-      ballXVel *= 0.88;
-      ballX += ballXVel;
-      ballX = Math.max(-LANE_W+0.4, Math.min(LANE_W-0.4, ballX));
+      thetaVel *= 0.85;
+      theta += thetaVel;
 
-      ball.position.x += (ballX - ball.position.x) * 0.18;
-      ball.rotation.z -= ballXVel * 0.5;
-      ball.rotation.x -= speed*dt*0.9;
+      ship.position.set(PLAYER_R*Math.cos(theta), PLAYER_R*Math.sin(theta), PLAYER_Z);
+      ship.rotation.z = theta - Math.PI/2 + Math.sin(bobT*6)*0.03;
 
-      if (!falling) {
-        ball.position.y = 0.42 + Math.sin(bobT*10)*0.015;
-
-        // check current segment under ball for gap
-        const ballZ = ball.position.z;
-        // find segment whose range contains a world-relative position:
-        // segments move toward camera by scrolling segData z + scrollOffset
-      }
-
-      // scroll world toward camera
       const scrollAmt = speed*dt;
-      for (let i=0;i<segMeshes.length;i++){
-        segMeshes[i].position.z += scrollAmt;
-        segData[i].z += scrollAmt;
-        if (segData[i].coinMesh) segData[i].coinMesh.position.z += scrollAmt;
+      for (const g of gates){
+        g.group.position.z += scrollAmt;
+        g.gem.rotation.y += dt*3;
       }
 
-      // recycle segments that passed camera
-      for (let i=0;i<segData.length;i++){
-        if (segData[i].z > 6) {
-          // move to back
-          const minZ = Math.min(...segData.map(s=>s.z));
-          scene.remove(segMeshes[i]);
-          if (segData[i].coinMesh) scene.remove(segData[i].coinMesh);
-          const newZ = minZ - SEG_LEN;
-          const isGap = Math.random() < 0.15;
-          const g = makeSegment(newZ, isGap);
-          segMeshes[i] = g;
-          const hasCoin = !isGap && Math.random() < 0.5;
-          let coinMesh = null;
-          if (hasCoin){
-            coinMesh = new THREE.Mesh(
-              new THREE.OctahedronGeometry(0.28, 0),
-              new THREE.MeshStandardMaterial({ color: 0xffe14d, emissive: 0xffe14d, emissiveIntensity: 0.8, metalness: 0.6, roughness: 0.2 })
-            );
-            coinMesh.position.set((Math.random()-0.5)*LANE_W*1.4, 0.6, newZ);
-            scene.add(coinMesh);
-          }
-          segData[i] = { z:newZ, isGap, hasCoin, coinMesh, taken:false };
+      // recycle gates that passed camera
+      for (const g of gates){
+        if (g.group.position.z > 6){
+          scene.remove(g.group);
+          const minZ = Math.min(...gates.map(o=>o.group.position.z));
+          const idx = gates.indexOf(g);
+          gates[idx] = buildGate(minZ - GATE_SPACING*GATE_COUNT/GATE_COUNT - GATE_SPACING*(GATE_COUNT-1));
+        }
+      }
+      // simpler recycle: keep spacing consistent by placing new gate behind the farthest one
+      for (const g of gates){
+        if (g.group.position.z > 6 && !g._recycled){
+          g._recycled = true;
         }
       }
 
-      // coin collection + spin
-      for (const s of segData){
-        if (s.coinMesh){
-          s.coinMesh.rotation.y += dt*3;
-          s.coinMesh.position.y = 0.6 + Math.sin(bobT*4)*0.08;
-          if (!s.taken && Math.abs(s.coinMesh.position.z - ball.position.z) < 0.5 && Math.abs(s.coinMesh.position.x - ball.position.x) < 0.55) {
-            s.taken = true;
-            scene.remove(s.coinMesh);
-            s.coinMesh = null;
+      // gem collection
+      for (const g of gates){
+        if (!g.gemTaken && Math.abs(g.group.position.z - PLAYER_Z) < 0.6){
+          const gemWorldX = g.gem.position.x;
+          const gemWorldY = g.gem.position.y;
+          const dx2 = gemWorldX - ship.position.x;
+          const dy2 = gemWorldY - ship.position.y;
+          if (dx2*dx2 + dy2*dy2 < 0.4){
+            g.gemTaken = true;
+            g.gem.visible = false;
             score += 1;
             scoreNum.textContent = score;
           }
         }
       }
 
-      // gap detection under the ball (z ~ 2, near-fixed)
-      if (!falling) {
-        const underZ = ball.position.z;
-        let onGap = false;
-        let onTrack = false;
-        for (const s of segData){
-          if (Math.abs(s.z - underZ) < SEG_LEN/2 + 0.3) {
-            if (s.isGap) onGap = true; else onTrack = true;
+      // collision check
+      for (const g of gates){
+        if (Math.abs(g.group.position.z - PLAYER_Z) < 0.35 && !g._checked){
+          g._checked = true;
+          if (!inGap(theta, g)){
+            gameOver();
           }
         }
-        if (onGap && !onTrack) {
-          falling = true;
-          fallVel = 0;
-        }
+        if (g.group.position.z - PLAYER_Z > 1) g._checked = false;
       }
 
-      if (falling) {
-        fallVel -= 18*dt;
-        ball.position.y += fallVel*dt;
-        if (ball.position.y < -8) gameOver();
-      }
-
-      // camera follow
-      camera.position.x += (ball.position.x*0.5 - camera.position.x)*0.08;
-      camera.position.y += (3.4 - camera.position.y)*0.06;
-      camera.position.z = ball.position.z + 6;
-      camera.lookAt(ball.position.x*0.3, 0.3, ball.position.z - 4);
-
-      rim.position.x = ball.position.x;
+      camera.position.set(0, 0, PLAYER_Z + 6);
+      camera.lookAt(ship.position.x*0.3, ship.position.y*0.3, PLAYER_Z - 8);
+      key.position.set(ship.position.x, ship.position.y, PLAYER_Z+2);
     } else {
-      // idle camera drift on menu
-      camera.position.x = Math.sin(bobT*0.2)*1.5;
-      camera.position.y = 3.4;
-      camera.position.z = 8;
+      camera.position.set(Math.sin(bobT*0.15)*1.2, Math.cos(bobT*0.15)*1.2, 8);
       camera.lookAt(0,0,-6);
     }
 
     renderer.render(scene, camera);
   }
 
-  resetTrack();
+  resetGates();
   requestAnimationFrame(animate);
 })();
 </script>
