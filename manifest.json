@@ -1,0 +1,12 @@
+{
+  "background_color": "#05010d",
+  "dir": "ltr",
+  "display": "standalone",
+  "name": "Neon",
+  "orientation": "any",
+  "scope": "/",
+  "short_name": "Drift",
+  "start_url": "/",
+  "theme_color": "#00ffd5",
+  "description": "3b top yuvarla enerji topla falan"
+}
