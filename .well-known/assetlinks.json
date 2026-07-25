@@ -1,0 +1,8 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "io.github.emingvn49_beep.twa",
+    "sha256_cert_fingerprints": ["8F:44:DE:C1:5B:13:A8:65:A4:E7:18:71:BD:E2:17:84:C6:AD:7E:60:5A:C8:FD:52:F3:47:01:78:D4:99:41:C0"]
+  }
+}]
